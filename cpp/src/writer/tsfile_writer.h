@@ -46,6 +46,7 @@ extern int libtsfile_init();
 extern void libtsfile_destroy();
 extern void set_page_max_point_count(uint32_t page_max_ponint_count);
 extern void set_max_degree_of_index_node(uint32_t max_degree_of_index_node);
+extern void set_strict_page_size(bool strict_page_size);
 
 class TsFileWriter {
    public:
@@ -116,6 +117,11 @@ class TsFileWriter {
     int write_point_aligned(ValueChunkWriter* value_chunk_writer,
                             int64_t timestamp, common::TSDataType data_type,
                             const DataPoint& point);
+    int maybe_seal_aligned_pages_together(
+        TimeChunkWriter* time_chunk_writer,
+        common::SimpleVector<ValueChunkWriter*>& value_chunk_writers,
+        int32_t time_pages_before,
+        const std::vector<int32_t>& value_pages_before);
     int flush_chunk_group(MeasurementSchemaGroup* chunk_group, bool is_aligned);
 
     int write_typed_column(storage::ChunkWriter* chunk_writer,

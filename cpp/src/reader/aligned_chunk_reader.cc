@@ -562,7 +562,6 @@ int AlignedChunkReader::decode_time_value_buf_into_tsblock(
                 row_appender.append_null(1);                                   \
                 continue;                                                      \
             }                                                                  \
-            assert(value_decoder_->has_remaining(value_in));                   \
             if (!value_decoder_->has_remaining(value_in)) {                    \
                 return common::E_DATA_INCONSISTENCY;                           \
             }                                                                  \
@@ -609,7 +608,6 @@ int AlignedChunkReader::i32_DECODE_TYPED_TV_INTO_TSBLOCK(
             row_appender.append_null(1);
             continue;
         }
-        assert(value_decoder_->has_remaining(value_in));
         if (!value_decoder_->has_remaining(value_in)) {
             return common::E_DATA_INCONSISTENCY;
         }
@@ -695,7 +693,6 @@ int AlignedChunkReader::STRING_DECODE_TYPED_TV_INTO_TSBLOCK(
         }
 
         if (should_read_data) {
-            assert(value_decoder_->has_remaining(value_in));
             if (!value_decoder_->has_remaining(value_in)) {
                 return E_DATA_INCONSISTENCY;
             }
