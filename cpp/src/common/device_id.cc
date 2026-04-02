@@ -209,11 +209,10 @@ std::vector<std::string> StringArrayDeviceID::split_device_id_string(
     const std::string& device_id_string) {
 #ifdef ENABLE_ANTLR4
     auto splits = storage::PathNodesGenerator::invokeParser(device_id_string);
-    return split_device_id_string(splits);
 #else
     auto splits = split_string(device_id_string, '.');
-    return split_device_id_string(splits);
 #endif
+    return split_device_id_string(splits);
 }
 
 std::vector<std::string> StringArrayDeviceID::split_device_id_string(
