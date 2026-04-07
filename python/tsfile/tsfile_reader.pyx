@@ -19,7 +19,7 @@
 #cython: language_level=3
 
 import weakref
-from typing import List
+from typing import List, Optional, Dict
 
 import pandas as pd
 from libc.stdint cimport INT64_MIN, INT64_MAX
@@ -30,6 +30,7 @@ import pyarrow as pa
 from libc.stdint cimport INT64_MIN, INT64_MAX, uintptr_t
 
 from tsfile.schema import TSDataType as TSDataTypePy
+from tsfile.schema import DeviceID, DeviceTimeseriesMetadataGroup
 from .date_utils import parse_int_to_date
 from .tsfile_cpp cimport *
 from .tsfile_py_cpp cimport *
@@ -426,6 +427,25 @@ cdef class TsFileReaderPy:
         Get all timeseries schemas
         """
         return get_all_timeseries_schema(self.reader)
+
+    def get_all_devices(self) -> List[DeviceID]:
+        """
+        Return all devices (path, table name, segments) as
+        :class:`tsfile.schema.DeviceID`. NULL C fields become None.
+        """
+        return reader_get_all_devices_c(self.reader)
+
+    def get_timeseries_metadata(
+            self, device_ids: Optional[List] = None
+    ) -> Dict[str, DeviceTimeseriesMetadataGroup]:
+        """
+        Return map device path -> :class:`tsfile.schema.DeviceTimeseriesMetadataGroup`
+        (table name, segments, and list of :class:`tsfile.schema.TimeseriesMetadata`).
+
+        ``device_ids is None``: all devices. ``device_ids == []``: empty map.
+        Non-empty list restricts to those devices (only existing devices appear).
+        """
+        return reader_get_timeseries_metadata_c(self.reader, device_ids)
 
     def close(self):
         """

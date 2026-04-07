@@ -103,6 +103,78 @@ cdef extern from "cwrapper/tsfile_cwrapper.h":
         TimeseriesSchema * timeseries_schema
         int timeseries_num
 
+    ctypedef struct TsFileStatisticBase:
+        bint has_statistic
+        TSDataType type
+        int32_t row_count
+        int64_t start_time
+        int64_t end_time
+
+    ctypedef struct TsFileBoolStatistic:
+        TsFileStatisticBase base
+        double sum
+        bint first_bool
+        bint last_bool
+
+    ctypedef struct TsFileIntStatistic:
+        TsFileStatisticBase base
+        double sum
+        int64_t min_int64
+        int64_t max_int64
+        int64_t first_int64
+        int64_t last_int64
+
+    ctypedef struct TsFileFloatStatistic:
+        TsFileStatisticBase base
+        double sum
+        double min_float64
+        double max_float64
+        double first_float64
+        double last_float64
+
+    ctypedef struct TsFileStringStatistic:
+        TsFileStatisticBase base
+        char* str_min
+        char* str_max
+        char* str_first
+        char* str_last
+
+    ctypedef struct TsFileTextStatistic:
+        TsFileStatisticBase base
+        char* str_first
+        char* str_last
+
+    ctypedef union TimeseriesStatisticUnion:
+        TsFileBoolStatistic bool_s
+        TsFileIntStatistic int_s
+        TsFileFloatStatistic float_s
+        TsFileStringStatistic string_s
+        TsFileTextStatistic text_s
+
+    ctypedef struct TimeseriesStatistic:
+        TimeseriesStatisticUnion u
+
+    ctypedef struct TimeseriesMetadata:
+        char * measurement_name
+        TSDataType data_type
+        int32_t chunk_meta_count
+        TimeseriesStatistic statistic
+
+    ctypedef struct DeviceID:
+        char * path
+        char * table_name
+        uint32_t segment_count
+        char ** segments
+
+    ctypedef struct DeviceTimeseriesMetadataEntry:
+        DeviceID device
+        TimeseriesMetadata * timeseries
+        uint32_t timeseries_count
+
+    ctypedef struct DeviceTimeseriesMetadataMap:
+        DeviceTimeseriesMetadataEntry * entries
+        uint32_t device_count
+
     ctypedef struct ResultSetMetaData:
         char** column_names
         TSDataType * data_types
@@ -217,6 +289,22 @@ cdef extern from "cwrapper/tsfile_cwrapper.h":
                                                       uint32_t * size);
     DeviceSchema * tsfile_reader_get_all_timeseries_schemas(TsFileReader reader,
                                                             uint32_t * size);
+
+    void tsfile_device_id_free_contents(DeviceID * d)
+
+    ErrorCode tsfile_reader_get_all_devices(TsFileReader reader,
+                                            DeviceID ** out_devices,
+                                            uint32_t * out_length);
+    void tsfile_free_device_id_array(DeviceID * devices,
+                                      uint32_t length);
+
+    ErrorCode tsfile_reader_get_timeseries_metadata_all(
+        TsFileReader reader, DeviceTimeseriesMetadataMap * out_map);
+    ErrorCode tsfile_reader_get_timeseries_metadata_for_devices(
+        TsFileReader reader, const DeviceID * devices, uint32_t length,
+        DeviceTimeseriesMetadataMap * out_map);
+    void tsfile_free_device_timeseries_metadata_map(
+        DeviceTimeseriesMetadataMap * map);
 
     # resultSet : get data from resultSet
     bint tsfile_result_set_next(ResultSet result_set, ErrorCode * err_code);
