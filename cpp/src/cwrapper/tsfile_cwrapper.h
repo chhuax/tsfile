@@ -252,6 +252,7 @@ typedef void* Tablet;
 typedef void* TsRecord;
 
 typedef void* ResultSet;
+typedef void* TagFilterHandle;
 
 typedef struct arrow_schema {
     // Array type description
@@ -675,16 +676,16 @@ ResultSet tsfile_reader_query_tree_by_row(TsFileReader reader,
  * @param err_code [out] Error code. E_OK(0) on success.
  * @return ResultSet handle on success; NULL on failure.
  */
-ResultSet tsfile_reader_query_table_by_row(TsFileReader reader,
-                                           const char* table_name,
-                                           char** column_names,
-                                           int column_names_len, int offset,
-                                           int limit, ERRNO* err_code);
+ResultSet tsfile_reader_query_table_by_row(
+    TsFileReader reader, const char* table_name, char** column_names,
+    int column_names_len, int offset, int limit, TagFilterHandle tag_filter,
+    int batch_size, ERRNO* err_code);
 
 ResultSet tsfile_query_table_batch(TsFileReader reader, const char* table_name,
                                    char** columns, uint32_t column_num,
                                    Timestamp start_time, Timestamp end_time,
-                                   int batch_size, ERRNO* err_code);
+                                   TagFilterHandle tag_filter, int batch_size,
+                                   ERRNO* err_code);
 // ResultSet tsfile_reader_query_device(TsFileReader reader,
 //                                      const char* device_name,
 //                                      char** sensor_name, uint32_t
@@ -858,6 +859,82 @@ TableSchema* tsfile_reader_get_all_table_schemas(TsFileReader reader,
  */
 DeviceSchema* tsfile_reader_get_all_timeseries_schemas(TsFileReader reader,
                                                        uint32_t* size);
+
+// ---------- Tag Filter API ----------
+
+/**
+ * @brief Tag filter comparison operators.
+ */
+typedef enum {
+    TAG_FILTER_EQ = 0,
+    TAG_FILTER_NEQ = 1,
+    TAG_FILTER_LT = 2,
+    TAG_FILTER_LTEQ = 3,
+    TAG_FILTER_GT = 4,
+    TAG_FILTER_GTEQ = 5,
+    TAG_FILTER_REGEXP = 6,
+    TAG_FILTER_NOT_REGEXP = 7,
+} TagFilterOp;
+
+/**
+ * @brief Create a tag filter with a comparison operator.
+ *
+ * @param reader [in] TsFileReader handle (used to resolve column name to
+ * index).
+ * @param table_name [in] Table name whose schema defines the TAG columns.
+ * @param column_name [in] Name of the TAG column to filter on.
+ * @param value [in] Comparison value (string).
+ * @param op [in] Comparison operator (TagFilterOp).
+ * @param err_code [out] Error code. E_OK(0) on success.
+ * @return TagFilterHandle on success; NULL on failure.
+ */
+TagFilterHandle tsfile_tag_filter_create(TsFileReader reader,
+                                         const char* table_name,
+                                         const char* column_name,
+                                         const char* value, TagFilterOp op,
+                                         ERRNO* err_code);
+
+/**
+ * @brief Create a BETWEEN tag filter (lower <= column <= upper).
+ */
+TagFilterHandle tsfile_tag_filter_between(TsFileReader reader,
+                                          const char* table_name,
+                                          const char* column_name,
+                                          const char* lower, const char* upper,
+                                          bool is_not, ERRNO* err_code);
+
+/**
+ * @brief Combine two tag filters with AND.
+ */
+TagFilterHandle tsfile_tag_filter_and(TagFilterHandle left,
+                                      TagFilterHandle right);
+
+/**
+ * @brief Combine two tag filters with OR.
+ */
+TagFilterHandle tsfile_tag_filter_or(TagFilterHandle left,
+                                     TagFilterHandle right);
+
+/**
+ * @brief Negate a tag filter.
+ */
+TagFilterHandle tsfile_tag_filter_not(TagFilterHandle filter);
+
+/**
+ * @brief Free a tag filter and all its children.
+ */
+void tsfile_tag_filter_free(TagFilterHandle filter);
+
+/**
+ * @brief Query table with tag filter.
+ *
+ * @param batch_size <= 0 means row-by-row return mode,
+ *                   > 0 means return TsBlock with the specified block size.
+ */
+ResultSet tsfile_query_table_with_tag_filter(
+    TsFileReader reader, const char* table_name, char** columns,
+    uint32_t column_num, Timestamp start_time, Timestamp end_time,
+    TagFilterHandle tag_filter, int batch_size, ERRNO* err_code);
 
 // Close and free resource.
 void free_tablet(Tablet* tablet);
