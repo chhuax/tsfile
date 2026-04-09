@@ -29,7 +29,8 @@ namespace storage {
 TsFileReader::TsFileReader()
     : read_file_(nullptr),
       tsfile_executor_(nullptr),
-      table_query_executor_(nullptr) {
+      table_query_executor_(nullptr),
+      table_query_executor_batch_size_(0) {
     tsfile_reader_meta_pa_.init(512, MOD_TSFILE_READER);
 }
 
@@ -57,12 +58,29 @@ int TsFileReader::close() {
         delete table_query_executor_;
         table_query_executor_ = nullptr;
     }
+    table_query_executor_batch_size_ = 0;
     if (read_file_ != nullptr) {
         read_file_->close();
         delete read_file_;
         read_file_ = nullptr;
     }
     return ret;
+}
+
+int TsFileReader::ensure_table_query_executor(int batch_size) {
+    if (table_query_executor_ != nullptr &&
+        table_query_executor_batch_size_ == batch_size) {
+        return E_OK;
+    }
+
+    if (table_query_executor_ != nullptr) {
+        delete table_query_executor_;
+        table_query_executor_ = nullptr;
+    }
+
+    table_query_executor_ = new TableQueryExecutor(read_file_, batch_size);
+    table_query_executor_batch_size_ = batch_size;
+    return E_OK;
 }
 
 int TsFileReader::query(QueryExpression* qe, ResultSet*& ret_qds) {
@@ -110,9 +128,7 @@ int TsFileReader::query(const std::string& table_name,
     }
 
     Filter* time_filter = new TimeBetween(start_time, end_time, false);
-    if (table_query_executor_ == nullptr) {
-        table_query_executor_ = new TableQueryExecutor(read_file_, batch_size);
-    }
+    ensure_table_query_executor(batch_size);
     ret = table_query_executor_->query(to_lower(table_name), columns_names,
                                        time_filter, tag_filter, nullptr,
                                        result_set);
@@ -147,9 +163,7 @@ int TsFileReader::queryByRow(const std::string& table_name,
         return E_TABLE_NOT_EXIST;
     }
 
-    if (table_query_executor_ == nullptr) {
-        table_query_executor_ = new TableQueryExecutor(read_file_, batch_size);
-    }
+    ensure_table_query_executor(batch_size);
     ret = table_query_executor_->query(to_lower(table_name), column_names,
                                        /*time_filter=*/nullptr, tag_filter,
                                        /*field_filter=*/nullptr, offset, limit,
@@ -228,9 +242,7 @@ int TsFileReader::query_table_on_tree(
         columns_names[i] = "col_" + std::to_string(i);
     }
     Filter* time_filter = new TimeBetween(star_time, end_time, false);
-    if (table_query_executor_ == nullptr) {
-        table_query_executor_ = new TableQueryExecutor(read_file_);
-    }
+    ensure_table_query_executor(-1);
     ret = table_query_executor_->query_on_tree(
         satisfied_device_ids, columns_names, measurement_names_to_query,
         time_filter, result_set);
@@ -334,9 +346,16 @@ int TsFileReader::get_timeseries_schema(
                          device_id, timeseries_indexs, pa))) {
     } else {
         for (auto timeseries_index : timeseries_indexs) {
+            auto* aligned_timeseries_index =
+                dynamic_cast<AlignedTimeseriesIndex*>(timeseries_index);
+            auto data_type =
+                aligned_timeseries_index != nullptr &&
+                        aligned_timeseries_index->value_ts_idx_ != nullptr
+                    ? aligned_timeseries_index->value_ts_idx_->get_data_type()
+                    : timeseries_index->get_data_type();
             MeasurementSchema ms(
                 timeseries_index->get_measurement_name().to_std_string(),
-                timeseries_index->get_data_type());
+                data_type);
             result.push_back(ms);
         }
     }

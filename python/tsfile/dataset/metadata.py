@@ -19,18 +19,17 @@
 """Shared metadata models for dataset readers and views."""
 
 from dataclasses import dataclass, field
+import sys
 from typing import Any, Dict, Iterable, Iterator, List, Tuple
-
-import numpy as np
 
 from ..constants import TSDataType
 
 
 _PATH_SEPARATOR = "."
 _PATH_ESCAPE = "\\"
+_DATACLASS_SLOTS = {"slots": True} if sys.version_info >= (3, 10) else {}
 
-
-@dataclass(slots=True)
+@dataclass(**_DATACLASS_SLOTS)
 class TableEntry:
     """Schema-level metadata shared by every device in one table."""
 
@@ -49,7 +48,7 @@ class TableEntry:
         return self._field_index_by_name[field_name]
 
 
-@dataclass(slots=True)
+@dataclass(**_DATACLASS_SLOTS)
 class DeviceEntry:
     """One logical device identified by table_id + ordered tag values.
 
@@ -58,13 +57,11 @@ class DeviceEntry:
 
     table_id: int
     tag_values: Tuple[Any, ...]
-    timestamps: np.ndarray
-    length: int
     min_time: int
     max_time: int
 
 
-@dataclass(slots=True)
+@dataclass(**_DATACLASS_SLOTS)
 class MetadataCatalog:
     """Canonical metadata store shared by dataset readers and dataframes."""
 
@@ -72,6 +69,7 @@ class MetadataCatalog:
     device_entries: List[DeviceEntry] = field(default_factory=list)
     table_id_by_name: Dict[str, int] = field(default_factory=dict)
     device_id_by_key: Dict[Tuple[int, tuple], int] = field(default_factory=dict)
+    series_stats_by_ref: Dict[Tuple[int, int], Dict[str, int]] = field(default_factory=dict)
 
     def add_table(
         self,
@@ -92,24 +90,24 @@ class MetadataCatalog:
         self.table_id_by_name[table_name] = table_id
         return table_id
 
-    def add_device(self, table_id: int, tag_values: tuple, timestamps: np.ndarray) -> int:
+    def add_device(
+        self,
+        table_id: int,
+        tag_values: tuple,
+        min_time: int,
+        max_time: int,
+    ) -> int:
         key = (table_id, tuple(tag_values))
         if key in self.device_id_by_key:
             return self.device_id_by_key[key]
-
-        timestamps = np.sort(timestamps)
-        if len(timestamps) == 0:
-            raise ValueError("Cannot register a device without timestamps.")
 
         device_id = len(self.device_entries)
         self.device_entries.append(
             DeviceEntry(
                 table_id=table_id,
                 tag_values=tuple(tag_values),
-                timestamps=timestamps,
-                length=len(timestamps),
-                min_time=int(timestamps[0]),
-                max_time=int(timestamps[-1]),
+                min_time=min_time,
+                max_time=max_time,
             )
         )
         self.device_id_by_key[key] = device_id
@@ -190,7 +188,7 @@ def resolve_series_path(catalog: MetadataCatalog, series_path: str) -> Tuple[int
     table_id = catalog.table_id_by_name[table_name]
     table_entry = catalog.table_entries[table_id]
     expected_parts = len(table_entry.tag_columns) + 2
-    if len(parts) != expected_parts:
+    if len(parts) > expected_parts:
         raise ValueError(f"Series not found: {series_path}")
 
     field_name = parts[-1]
