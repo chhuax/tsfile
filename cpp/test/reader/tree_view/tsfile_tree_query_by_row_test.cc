@@ -16,6 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+#include <fcntl.h>
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -24,13 +25,113 @@
 #include "common/global.h"
 #include "common/record.h"
 #include "common/schema.h"
+#include "common/tablet.h"
 #include "file/write_file.h"
 #include "reader/tsfile_reader.h"
 #include "reader/tsfile_tree_reader.h"
 #include "writer/tsfile_tree_writer.h"
+#include "writer/tsfile_writer.h"
 
 using namespace storage;
 using namespace common;
+
+namespace {
+
+int write_multi_device_data_tablet(
+    const std::vector<std::pair<std::string, std::vector<std::string>>>&
+        devices_and_measurements,
+    const std::vector<TSDataType>& data_types, int row_count,
+    const std::string& file_path) {
+    TsFileWriter tsfile_writer;
+    int flags = O_WRONLY | O_CREAT | O_TRUNC;
+#ifdef _WIN32
+    flags |= O_BINARY;
+#endif
+    mode_t mode = 0666;
+    int ret = tsfile_writer.open(file_path, flags, mode);
+    if (ret != E_OK) {
+        return ret;
+    }
+    for (auto& device_pair : devices_and_measurements) {
+        const std::vector<std::string>& measurements = device_pair.second;
+        if (measurements.size() != data_types.size()) {
+            return E_INVALID_ARG;
+        }
+    }
+    for (auto& device_pair : devices_and_measurements) {
+        const std::string& device_id = device_pair.first;
+        const std::vector<std::string>& measurements = device_pair.second;
+        for (size_t i = 0; i < measurements.size(); i++) {
+            MeasurementSchema schema(measurements[i], data_types[i]);
+            ret = tsfile_writer.register_timeseries(device_id, schema);
+            if (ret != E_OK) {
+                return ret;
+            }
+        }
+    }
+    for (auto& device_pair : devices_and_measurements) {
+        const std::string& device_id = device_pair.first;
+        const std::vector<std::string>& measurements = device_pair.second;
+        auto schema_ptr = std::make_shared<std::vector<MeasurementSchema>>();
+        for (size_t i = 0; i < measurements.size(); i++) {
+            schema_ptr->emplace_back(measurements[i], data_types[i]);
+        }
+        Tablet tablet(device_id, schema_ptr, row_count);
+        for (int row = 0; row < row_count; row++) {
+            ret = tablet.add_timestamp(row, row);
+            if (ret != E_OK) {
+                return ret;
+            }
+            for (size_t col = 0; col < measurements.size(); col++) {
+                if ((static_cast<unsigned>(row) % 2) == (col % 2)) {
+                    continue;
+                }
+                switch (data_types[col]) {
+                    case BOOLEAN:
+                        ret = tablet.add_value(row, col, (row % 2 != 0));
+                        break;
+                    case INT32:
+                        ret = tablet.add_value(row, col,
+                                               static_cast<int32_t>(row));
+                        break;
+                    case INT64:
+                        ret = tablet.add_value(row, col,
+                                               static_cast<int64_t>(row));
+                        break;
+                    case FLOAT:
+                        ret =
+                            tablet.add_value(row, col, static_cast<float>(row));
+                        break;
+                    case DOUBLE:
+                        ret = tablet.add_value(row, col,
+                                               static_cast<double>(row));
+                        break;
+                    case STRING: {
+                        std::string val_str = "string" + std::to_string(row);
+                        ret = tablet.add_value(row, col, val_str.c_str());
+                        break;
+                    }
+                    default:
+                        return E_TYPE_NOT_MATCH;
+                }
+                if (ret != E_OK) {
+                    return ret;
+                }
+            }
+        }
+        ret = tsfile_writer.write_tablet(tablet);
+        if (ret != E_OK) {
+            return ret;
+        }
+    }
+    ret = tsfile_writer.flush();
+    if (ret != E_OK) {
+        return ret;
+    }
+    return tsfile_writer.close();
+}
+
+}  // namespace
 
 class TreeQueryByRowTest : public ::testing::Test {
    protected:
@@ -169,6 +270,49 @@ TEST_F(TreeQueryByRowTest, QueryByRow_SkipsMissingDeviceAndMeasurement) {
 
     reader.destroy_query_data_set(result);
     reader.close();
+}
+
+TEST_F(TreeQueryByRowTest, QueryByRow_TabletMultiType_PartialPaths) {
+    std::string tablet_path = std::string("tree_query_by_row_tablet_") +
+                              generate_random_string(10) + ".tsfile";
+    remove(tablet_path.c_str());
+
+    std::vector<std::string> devices = {"root.db.d1"};
+    std::vector<std::string> measurement_names = {"bool_col",   "int32_col",
+                                                  "int64_col",  "float_col",
+                                                  "double_col", "string_col"};
+    std::vector<std::pair<std::string, std::vector<std::string>>>
+        devices_and_measurements = {{devices[0], measurement_names}};
+    std::vector<TSDataType> data_types = {BOOLEAN, INT32,  INT64,
+                                          FLOAT,   DOUBLE, STRING};
+    const int total_rows = 10;
+    ASSERT_EQ(E_OK, write_multi_device_data_tablet(devices_and_measurements,
+                                                   data_types, total_rows,
+                                                   tablet_path));
+
+    TsFileTreeReader reader;
+    ASSERT_EQ(E_OK, reader.open(tablet_path));
+
+    std::vector<std::string> q_devices = {devices[0], "d999"};
+    std::vector<std::string> q_meas = {measurement_names[0],
+                                       measurement_names[1], "ghost_m"};
+    ResultSet* result_set2 = nullptr;
+    ASSERT_EQ(E_OK, reader.queryByRow(q_devices, q_meas, 0, -1, result_set2));
+    ASSERT_NE(result_set2, nullptr);
+    auto meta2 = result_set2->get_metadata();
+    // Metadata includes the time column plus one entry per resolved series.
+    ASSERT_EQ(3u, meta2->get_column_count());
+
+    bool has_next = false;
+    int row_count = 0;
+    while (IS_SUCC(result_set2->next(has_next)) && has_next) {
+        row_count++;
+    }
+    EXPECT_EQ(row_count, total_rows);
+
+    reader.destroy_query_data_set(result_set2);
+    ASSERT_EQ(E_OK, reader.close());
+    remove(tablet_path.c_str());
 }
 
 // Device id with three dot-separated parts (e.g. root.sg1.FeederA) must resolve

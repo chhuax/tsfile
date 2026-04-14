@@ -67,10 +67,15 @@ int QDSWithoutTimeGenerator::init_internal(TsFileIOReader* io_reader,
         TsFileSeriesScanIterator* ssi = nullptr;
         ret = io_reader_->alloc_ssi(paths[i].device_id_, paths[i].measurement_,
                                     ssi, pa_, global_time_filter);
-        if (ret == E_MEASUREMENT_NOT_EXIST || ret == E_DEVICE_NOT_EXIST) {
+        if (ret == E_MEASUREMENT_NOT_EXIST || ret == E_DEVICE_NOT_EXIST ||
+            ret == E_NOT_EXIST) {
             continue;
         }
         if (ret != E_OK) {
+            for (size_t j = 0; j < ssi_vec_.size(); j++) {
+                io_reader_->revert_ssi(ssi_vec_[j]);
+            }
+            ssi_vec_.clear();
             return ret;
         }
         size_t col_idx = ssi_vec_.size();
@@ -139,6 +144,7 @@ void QDSWithoutTimeGenerator::close() {
         io_reader_->revert_ssi(ssi);
     }
     ssi_vec_.clear();
+    tsblocks_.clear();
     if (qe_ != nullptr) {
         delete qe_;
         qe_ = nullptr;
