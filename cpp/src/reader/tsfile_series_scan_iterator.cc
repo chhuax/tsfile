@@ -91,8 +91,14 @@ int TsFileSeriesScanIterator::get_next(TsBlock*& ret_tsblock, bool alloc,
     Filter* filter =
         (oneshoot_filter != nullptr) ? oneshoot_filter : time_filter_;
 
+    bool force_load_next_chunk = false;
     while (true) {
-        if (!chunk_reader_->has_more_data()) {
+        // When get_next_page() reports no more data for the current chunk but
+        // metadata still lists more chunks, we must load the next chunk. A
+        // bare continue would retry the exhausted reader forever if
+        // has_more_data() still returns true (e.g. aligned chunk state).
+        if (!chunk_reader_->has_more_data() || force_load_next_chunk) {
+            force_load_next_chunk = false;
             while (true) {
                 if (!has_next_chunk()) {
                     return E_NO_MORE_DATA;
@@ -155,6 +161,7 @@ int TsFileSeriesScanIterator::get_next(TsBlock*& ret_tsblock, bool alloc,
         // but there are more chunks, load next chunk and retry.
         if (ret == common::E_NO_MORE_DATA && has_next_chunk()) {
             ret = E_OK;
+            force_load_next_chunk = true;
             continue;
         }
         return ret;

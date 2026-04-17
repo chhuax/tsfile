@@ -546,3 +546,154 @@ TEST_F(RestorableTsFileIOWriterTest, TableWriterRecoverAndWrite) {
     table_reader.destroy_query_data_set(tmp_result_set);
     table_reader.close();
 }
+
+TEST_F(RestorableTsFileIOWriterTest, TableWriterRecoverAndWrite1) {
+    using namespace std;
+    string table_name = "test_table";
+    vector<string> column_names = {"t1", "f1", "f2", "f3", "f4", "f5",
+                                   "f6", "f7", "f8", "f9", "f10"};
+    vector<TSDataType> data_types = {STRING, BOOLEAN, INT32,    INT64,
+                                     FLOAT,  DOUBLE,  TEXT,     STRING,
+                                     BLOB,   DATE,    TIMESTAMP};
+    std::vector<MeasurementSchema*> column_schemas;
+    for (int i = 0; i < column_names.size(); i++) {
+        column_schemas.push_back(
+            new MeasurementSchema(column_names[i], data_types[i]));
+    }
+    std::vector<ColumnCategory> column_categories = {
+        ColumnCategory::TAG,   ColumnCategory::FIELD, ColumnCategory::FIELD,
+        ColumnCategory::FIELD, ColumnCategory::FIELD, ColumnCategory::FIELD,
+        ColumnCategory::FIELD, ColumnCategory::FIELD, ColumnCategory::FIELD,
+        ColumnCategory::FIELD, ColumnCategory::FIELD};
+    TableSchema table_schema(table_name, column_schemas, column_categories);
+
+    // 2. 写入数据
+    WriteFile write_file;
+    write_file.create(file_name_, GetWriteCreateFlags(), 0666);
+    TsFileTableWriter table_writer(&write_file, &table_schema);
+    uint32_t max_rows = 10;
+    Tablet tablet(table_schema.get_measurement_names(),
+                  table_schema.get_data_types(), max_rows);
+    tablet.set_table_name(table_name);
+    for (int row = 0; row < max_rows; row++) {
+        ASSERT_EQ(tablet.add_timestamp(row, static_cast<int64_t>(row)), E_OK);
+        if (row % 2 == 0) {
+            ASSERT_EQ(tablet.add_value(row, column_names[0], "device0"), E_OK);
+            ASSERT_EQ(tablet.add_value(row, column_names[1], row % 2 == 0),
+                      E_OK);
+            ASSERT_EQ(tablet.add_value(row, column_names[2],
+                                       static_cast<int32_t>(row)),
+                      E_OK);
+            ASSERT_EQ(tablet.add_value(row, column_names[3],
+                                       static_cast<int64_t>(row)),
+                      E_OK);
+            ASSERT_EQ(tablet.add_value(row, column_names[4],
+                                       static_cast<float>(row * 1.1)),
+                      E_OK);
+            ASSERT_EQ(tablet.add_value(row, column_names[5],
+                                       static_cast<double>(row * 1.1)),
+                      E_OK);
+            ASSERT_EQ(tablet.add_value(row, column_names[6],
+                                       ("text" + to_string(row)).c_str()),
+                      E_OK);
+            ASSERT_EQ(tablet.add_value(row, column_names[7],
+                                       ("string" + to_string(row)).c_str()),
+                      E_OK);
+            ASSERT_EQ(tablet.add_value(row, column_names[8],
+                                       ("blob" + to_string(row)).c_str()),
+                      E_OK);
+            ASSERT_EQ(tablet.add_value(row, column_names[9],
+                                       static_cast<int32_t>(row)),
+                      E_OK);
+            ASSERT_EQ(tablet.add_value(row, column_names[10],
+                                       static_cast<int64_t>(row)),
+                      E_OK);
+        }
+    }
+    ASSERT_EQ(table_writer.write_table(tablet), E_OK);
+    ASSERT_EQ(table_writer.flush(), E_OK);
+    ASSERT_EQ(table_writer.close(), E_OK);
+    ASSERT_EQ(write_file.close(), E_OK);
+
+    // 3. 损坏文件并继续写入数据
+    CorruptCurrentFileTail(10);
+    RestorableTsFileIOWriter rw;
+    ASSERT_EQ(rw.open(file_name_, true), E_OK);
+    ASSERT_TRUE(rw.can_write());
+
+    TsFileTableWriter table_writer2(&rw);
+    vector<string> column_names2 = {"__level1", "f1", "f2", "f3", "f4", "f5",
+                                    "f6",       "f7", "f8", "f9", "f10"};
+    vector<TSDataType> data_types2 = {STRING, BOOLEAN, INT32,    INT64,
+                                      FLOAT,  DOUBLE,  TEXT,     STRING,
+                                      BLOB,   DATE,    TIMESTAMP};
+    uint32_t max_rows2 = 10;
+    Tablet tablet2(column_names2, data_types2, max_rows2);
+    tablet2.set_table_name(table_name);
+    for (int row = 0; row < max_rows; row++) {
+        ASSERT_EQ(
+            tablet2.add_timestamp(row, static_cast<int64_t>(row + max_rows)),
+            E_OK);
+        if (row % 2 == 0) {
+            ASSERT_EQ(tablet2.add_value(row, column_names2[0], "device1"),
+                      E_OK);
+            ASSERT_EQ(tablet2.add_value(row, column_names2[1], row % 2 == 0),
+                      E_OK);
+            ASSERT_EQ(tablet2.add_value(row, column_names2[2],
+                                        static_cast<int32_t>(row)),
+                      E_OK);
+            ASSERT_EQ(tablet2.add_value(row, column_names2[3],
+                                        static_cast<int64_t>(row)),
+                      E_OK);
+            ASSERT_EQ(tablet2.add_value(row, column_names2[4],
+                                        static_cast<float>(row * 1.1)),
+                      E_OK);
+            ASSERT_EQ(tablet2.add_value(row, column_names2[5],
+                                        static_cast<double>(row * 1.1)),
+                      E_OK);
+            ASSERT_EQ(tablet2.add_value(row, column_names2[6],
+                                        ("text" + to_string(row)).c_str()),
+                      E_OK);
+            ASSERT_EQ(tablet2.add_value(row, column_names2[7],
+                                        ("string" + to_string(row)).c_str()),
+                      E_OK);
+            ASSERT_EQ(tablet2.add_value(row, column_names2[8],
+                                        ("blob" + to_string(row)).c_str()),
+                      E_OK);
+            ASSERT_EQ(tablet2.add_value(row, column_names2[9],
+                                        static_cast<int32_t>(row)),
+                      E_OK);
+            ASSERT_EQ(tablet2.add_value(row, column_names2[10],
+                                        static_cast<int64_t>(row)),
+                      E_OK);
+        }
+    }
+    ASSERT_EQ(table_writer2.write_table(tablet2), E_OK);
+    ASSERT_EQ(table_writer2.flush(), E_OK);
+    ASSERT_EQ(table_writer2.close(), E_OK);
+
+    // 4. 查询元数据与行数（与 TableWriterRecoverAndWrite 一致：统计行，不打印）
+    TsFileReader table_reader;
+    ASSERT_EQ(table_reader.open(file_name_), E_OK);
+    DeviceTimeseriesMetadataMap metadata =
+        table_reader.get_timeseries_metadata();
+    ASSERT_EQ(metadata.size(), 3u);
+
+    storage::ResultSet* temp_ret = nullptr;
+    ASSERT_EQ(table_reader.query(table_name, column_names2, 0, 100, temp_ret),
+              E_OK);
+    auto* table_result_set = dynamic_cast<storage::TableResultSet*>(temp_ret);
+    ASSERT_NE(table_result_set, nullptr);
+    bool has_next = false;
+    int64_t row_num = 0;
+    while (IS_SUCC(table_result_set->next(has_next)) && has_next) {
+        (void)table_result_set->get_row_record();
+        row_num++;
+    }
+    // 两次写入各 10 行：奇数行仅时间（null 设备）+ 偶数行带 device，共 20
+    // 行可查
+    ASSERT_EQ(row_num, 20);
+    table_result_set->close();
+    table_reader.destroy_query_data_set(temp_ret);
+    table_reader.close();
+}

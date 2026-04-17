@@ -45,29 +45,57 @@ int TsFileIOWriter::init(WriteFile* write_file) {
     const uint32_t page_size = 1024;
     meta_allocator_.init(page_size, MOD_TSFILE_WRITER_META);
     chunk_meta_count_ = 0;
+    recovery_chunk_meta_prefix_.clear();
+    destroyed_ = false;
     file_ = write_file;
     return ret;
 }
 
 void TsFileIOWriter::destroy() {
-    // When meta came from RestorableTsFileIOWriter recovery, entries live in
-    // an arena there; do not release device_id_/statistic_ here.
-    if (!chunk_group_meta_from_recovery_) {
-        for (auto iter = chunk_group_meta_list_.begin();
-             iter != chunk_group_meta_list_.end(); iter++) {
-            if (iter.get() && iter.get()->device_id_) {
-                iter.get()->device_id_.reset();
-            }
-            if (iter.get()) {
-                for (auto chunk_meta = iter.get()->chunk_meta_list_.begin();
-                     chunk_meta != iter.get()->chunk_meta_list_.end();
-                     chunk_meta++) {
-                    if (chunk_meta.get()) {
-                        chunk_meta.get()->statistic_->destroy();
-                    }
-                }
+    if (destroyed_) {
+        return;
+    }
+    // Recovery attaches a prefix of ChunkGroupMeta; device_id and chunk stats
+    // in that snapshot live in reader/recovery memory. After open, new chunks
+    // may be pushed into the same ChunkGroupMeta (same device); only those
+    // appended ChunkMeta need statistic_->destroy() (see
+    // recovery_chunk_meta_prefix_).
+    for (auto iter = chunk_group_meta_list_.begin();
+         iter != chunk_group_meta_list_.end(); iter++) {
+        ChunkGroupMeta* cgm = iter.get();
+        auto prefix_it = recovery_chunk_meta_prefix_.find(cgm);
+        const bool is_recovery_cgm =
+            chunk_group_meta_from_recovery_ && cgm != nullptr &&
+            prefix_it != recovery_chunk_meta_prefix_.end();
+        uint32_t recovered_cm_count = is_recovery_cgm ? prefix_it->second : 0;
+
+        if (!is_recovery_cgm) {
+            if (cgm != nullptr && cgm->device_id_) {
+                cgm->device_id_.reset();
             }
         }
+
+        if (cgm == nullptr) {
+            continue;
+        }
+        uint32_t cm_idx = 0;
+        for (auto chunk_meta = cgm->chunk_meta_list_.begin();
+             chunk_meta != cgm->chunk_meta_list_.end();
+             chunk_meta++, cm_idx++) {
+            if (chunk_meta.get() == nullptr ||
+                chunk_meta.get()->statistic_ == nullptr) {
+                continue;
+            }
+            if (is_recovery_cgm && cm_idx < recovered_cm_count) {
+                continue;
+            }
+            chunk_meta.get()->statistic_->destroy();
+        }
+    }
+
+    if (cur_chunk_meta_ != nullptr && cur_chunk_meta_->statistic_ != nullptr) {
+        cur_chunk_meta_->statistic_->destroy();
+        cur_chunk_meta_ = nullptr;
     }
 
     meta_allocator_.destroy();
@@ -76,6 +104,7 @@ void TsFileIOWriter::destroy() {
         delete file_;
         file_ = nullptr;
     }
+    destroyed_ = true;
 }
 
 int TsFileIOWriter::start_file() {

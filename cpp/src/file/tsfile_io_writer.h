@@ -192,9 +192,12 @@ class TsFileIOWriter {
     void push_chunk_group_meta(ChunkGroupMeta* cgm) {
         chunk_group_meta_list_.push_back(cgm);
     }
-    /** True when chunk_group_meta_list_ entries are from recovery arena;
-     * destroy() must not free them. */
+    /** True when chunk_group_meta_list_ has a prefix loaded from recovery;
+     * destroy() must not free device_id_/statistic_ for that prefix only. */
     bool chunk_group_meta_from_recovery_ = false;
+    /** Recovered ChunkGroupMeta* -> chunk_meta_list_.size() at attach (pointer
+     * keys avoid idx skew). */
+    std::map<ChunkGroupMeta*, uint32_t> recovery_chunk_meta_prefix_;
     /**
      * Recovery only: set file_base_offset_ so that cur_file_position() returns
      * correct absolute offsets.  After recovery the writer behaves as if the
@@ -224,6 +227,10 @@ class TsFileIOWriter {
     /** Recovery only: absolute file offset at which write_stream_ logically
      * begins.  Normal (non-recovery) path keeps this at 0. */
     int64_t file_base_offset_ = 0;
+    /** Set after destroy() completes; avoids double cleanup when
+     * RestorableTsFileIOWriter::close() calls destroy() before
+     * self_check_arena_.destroy(), then ~TsFileIOWriter runs again. */
+    bool destroyed_ = false;
 
     friend class RestorableTsFileIOWriter;  // uses push_chunk_group_meta
 };

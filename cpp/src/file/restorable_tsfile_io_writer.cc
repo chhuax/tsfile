@@ -492,6 +492,7 @@ void RestorableTsFileIOWriter::close() {
         write_file_ = nullptr;
         write_file_owned_ = false;
     }
+    TsFileIOWriter::destroy();
     for (ChunkGroupMeta* cgm : self_check_recovered_cgm_) {
         cgm->device_id_.reset();
     }
@@ -815,9 +816,12 @@ int RestorableTsFileIOWriter::self_check(bool truncate_corrupted) {
         }
     }
 
-    // --- Attach recovered ChunkGroupMeta to writer; destroy() will not free
-    // them ---
+    // --- Attach recovered ChunkGroupMeta to writer; record per-CGM prefix
+    // length so destroy() can free stats appended later. ---
+    recovery_chunk_meta_prefix_.clear();
     for (ChunkGroupMeta* cgm : recovered_cgm_list) {
+        recovery_chunk_meta_prefix_[cgm] =
+            static_cast<uint32_t>(cgm->chunk_meta_list_.size());
         push_chunk_group_meta(cgm);
     }
     chunk_group_meta_from_recovery_ = true;
