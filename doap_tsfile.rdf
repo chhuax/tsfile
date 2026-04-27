@@ -50,6 +50,14 @@
     <release>
       <Version>
         <name>Apache TsFile</name>
+        <created>2026-04-27</created>
+        <revision>2.3.0</revision>
+      </Version>
+    </release>
+
+    <release>
+      <Version>
+        <name>Apache TsFile</name>
         <created>2026-03-20</created>
         <revision>2.2.1</revision>
       </Version>
